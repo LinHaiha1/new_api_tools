@@ -10,7 +10,10 @@
 
 services:
   newapi-tools:
-    image: ghcr.io/james-6-23/new_api_tools:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: newapi-tools:commission-prompt-audit
     container_name: newapi-tools
     ports:
       # FRONTEND_BIND 控制端口绑定的网卡：
@@ -36,7 +39,7 @@ services:
       - JWT_SECRET_KEY=${JWT_SECRET}
       - JWT_EXPIRE_HOURS=${JWT_EXPIRE_HOURS:-24}
       # Redis 缓存
-      - REDIS_CONN_STRING=redis://:${REDIS_PASSWORD:-}@redis:6379/0
+      - REDIS_CONN_STRING=redis://:${REDIS_PASSWORD:-}@newapi-tools-redis:6379/0
       # 服务配置
       # SERVER_HOST 默认 127.0.0.1（仅供容器内 Nginx 反代访问，对外端口由 Nginx 暴露）
       # 如需让其他容器/宿主机直连 Go 后端 8000，可在 .env 中改为 0.0.0.0（不推荐，安全风险）
@@ -46,6 +49,8 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       # NewAPI 连接
       - NEWAPI_BASEURL=${NEWAPI_BASEURL:-}
+      - NEWAPI_PUBLIC_BASEURL=${NEWAPI_PUBLIC_BASEURL:-${NEWAPI_BASEURL:-}}
+      - PROMPT_AUDIT_SECRET=${PROMPT_AUDIT_SECRET:-}
     volumes:
       - ./data:/app/data
     restart: unless-stopped

@@ -14,9 +14,12 @@ const ModelStatusMonitor = lazy(() => import('./components/ModelStatusMonitor').
 const AutoGroup = lazy(() => import('./components/AutoGroup').then(m => ({ default: m.AutoGroup })))
 const Tokens = lazy(() => import('./components/Tokens').then(m => ({ default: m.Tokens })))
 const AbuseBroadcast = lazy(() => import('./components/AbuseBroadcast').then(m => ({ default: m.AbuseBroadcast })))
+const AgentPortal = lazy(() => import('./components/AgentPortal').then(m => ({ default: m.AgentPortal })))
+const AgentAdminSettings = lazy(() => import('./components/AgentAdminSettings').then(m => ({ default: m.AgentAdminSettings })))
+const PromptAudit = lazy(() => import('./components/PromptAudit').then(m => ({ default: m.PromptAudit })))
 
 // Valid tabs
-const validTabs: TabType[] = ['dashboard', 'topups', 'risk', 'abuse-broadcast', 'ip-analysis', 'analytics', 'model-status', 'users', 'tokens', 'auto-group', 'redemptions']
+const validTabs: TabType[] = ['dashboard', 'topups', 'risk', 'prompt-audit', 'abuse-broadcast', 'ip-analysis', 'analytics', 'model-status', 'users', 'tokens', 'auto-group', 'agent-admin', 'redemptions']
 
 // 旧路径迁移：generator / history 现合并到 redemptions 内部 tab
 const legacyRedirects: Record<string, string> = {
@@ -55,7 +58,7 @@ const getInitialTab = (): TabType => {
   return 'dashboard'
 }
 
-function App() {
+function MainApp() {
   const { isAuthenticated, token, login, logout } = useAuth()
   const [activeTab, setActiveTab] = useState<TabType>(getInitialTab)
   const [warmupState, setWarmupState] = useState<'checking' | 'warming' | 'ready'>('checking')
@@ -162,6 +165,8 @@ function App() {
         return <TopUps />
       case 'risk':
         return <RealtimeRanking />
+      case 'prompt-audit':
+        return <PromptAudit />
       case 'abuse-broadcast':
         return <AbuseBroadcast />
       case 'ip-analysis':
@@ -176,6 +181,8 @@ function App() {
         return <Tokens />
       case 'auto-group':
         return <AutoGroup />
+      case 'agent-admin':
+        return <AgentAdminSettings />
       default:
         return <Dashboard />
     }
@@ -194,6 +201,24 @@ function App() {
       </Suspense>
     </Layout>
   )
+}
+
+function App() {
+  if (window.location.pathname === '/admin') {
+    return (
+      <Suspense
+        fallback={
+          <div className="min-h-screen flex items-center justify-center">
+            <div className="w-8 h-8 rounded-full border-4 border-primary/20 border-t-primary animate-spin" />
+          </div>
+        }
+      >
+        <AgentPortal />
+      </Suspense>
+    )
+  }
+
+  return <MainApp />
 }
 
 export default App

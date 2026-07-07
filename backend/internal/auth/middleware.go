@@ -18,6 +18,7 @@ var SkipPaths = map[string]bool{
 // SkipPrefixes are path prefixes that don't require authentication
 var SkipPrefixes = []string{
 	"/api/auth/",
+	"/api/agent/auth/",
 }
 
 // AuthMiddleware provides authentication via API Key or JWT Token
@@ -42,10 +43,12 @@ func AuthMiddleware() gin.HandlerFunc {
 			}
 		}
 
+		isAgentPath := strings.HasPrefix(path, "/api/agent/")
+
 		// Try API Key authentication first (X-API-Key header)
 		apiKey := c.GetHeader("X-API-Key")
 		if apiKey != "" {
-			if VerifyAPIKey(apiKey) {
+			if VerifyAPIKey(apiKey) && !isAgentPath {
 				c.Set("auth_method", "api_key")
 				c.Next()
 				return
@@ -69,6 +72,21 @@ func AuthMiddleware() gin.HandlerFunc {
 
 				claims, err := ValidateToken(tokenString)
 				if err == nil && claims != nil {
+					if isAgentPath {
+						if !strings.HasPrefix(claims.Subject, "agent:") {
+							c.AbortWithStatusJSON(http.StatusUnauthorized, models.NewErrorResponse(
+								"UNAUTHORIZED",
+								"Agent token required",
+							))
+							return
+						}
+					} else if claims.Subject != "admin" {
+						c.AbortWithStatusJSON(http.StatusUnauthorized, models.NewErrorResponse(
+							"UNAUTHORIZED",
+							"Admin token required",
+						))
+						return
+					}
 					c.Set("auth_method", "jwt")
 					c.Set("user_sub", claims.Subject)
 					c.Next()

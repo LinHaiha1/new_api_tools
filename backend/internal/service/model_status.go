@@ -14,7 +14,7 @@ import (
 var (
 	AvailableTimeWindows = []string{"1h", "6h", "12h", "24h"}
 	DefaultTimeWindow    = "24h"
-	AvailableThemes = []string{
+	AvailableThemes      = []string{
 		"daylight", "obsidian", "minimal", "neon", "forest", "ocean", "terminal",
 		"cupertino", "material", "openai", "anthropic", "vercel", "linear",
 		"stripe", "github", "discord", "tesla",
@@ -74,11 +74,13 @@ func NewModelStatusService() *ModelStatusService {
 }
 
 // GetAvailableModels returns all models with 24h request counts
-func (s *ModelStatusService) GetAvailableModels() ([]map[string]interface{}, error) {
+func (s *ModelStatusService) GetAvailableModels(noCache ...bool) ([]map[string]interface{}, error) {
 	cm := cache.Get()
+	cacheKey := "model_status:available_models"
+	forceRefresh := len(noCache) > 0 && noCache[0]
 	var cached []map[string]interface{}
-	found, _ := cm.GetJSON("model_status:available_models", &cached)
-	if found {
+	found, _ := cm.GetJSON(cacheKey, &cached)
+	if found && !forceRefresh {
 		return cached, nil
 	}
 
@@ -96,18 +98,19 @@ func (s *ModelStatusService) GetAvailableModels() ([]map[string]interface{}, err
 		return nil, err
 	}
 
-	cm.Set("model_status:available_models", rows, 5*time.Minute)
+	cm.Set(cacheKey, rows, 5*time.Minute)
 	return rows, nil
 }
 
 // GetModelStatus returns status for a specific model
 // Uses a single GROUP BY FLOOR query (matches Python backend optimization)
-func (s *ModelStatusService) GetModelStatus(modelName, window string) (map[string]interface{}, error) {
+func (s *ModelStatusService) GetModelStatus(modelName, window string, noCache ...bool) (map[string]interface{}, error) {
 	cacheKey := fmt.Sprintf("model_status:%s:%s", modelName, window)
 	cm := cache.Get()
+	forceRefresh := len(noCache) > 0 && noCache[0]
 	var cached map[string]interface{}
 	found, _ := cm.GetJSON(cacheKey, &cached)
-	if found {
+	if found && !forceRefresh {
 		return cached, nil
 	}
 
@@ -122,29 +125,37 @@ func (s *ModelStatusService) GetModelStatus(modelName, window string) (map[strin
 	numSlots := twConfig.numSlots
 	slotSeconds := twConfig.slotSeconds
 
-	// Single optimized query — aggregate by time slot using FLOOR division
+	// Single optimized query: aggregate by time slot using database-specific numeric division.
 	// This reduces N queries to 1 query per model (matches Python backend)
 	//
 	// Success counting strategy:
-	//   - type=2 with completion_tokens > 0 → definite success
-	//   - type=2 with completion_tokens = 0 → empty response (likely failure)
-	//   - type=5 → explicit failure (if NewAPI version supports it)
-	// This ensures correct success rate even when NewAPI doesn't log type=5 failures.
+	//   - type=2 is treated as a successful log entry
+	//   - type=5 is treated as an explicit failure if the NewAPI version supports it
+	//   - empty response counts are enabled only when logs.completion_tokens exists
+	slotExpr := fmt.Sprintf("FLOOR((created_at - %d) / %d)", startTime, slotSeconds)
+	if s.db.IsPG {
+		slotExpr = fmt.Sprintf("FLOOR(((created_at - %d)::numeric) / %d)", startTime, slotSeconds)
+	}
+	emptyExpr := "0"
+	if s.db.ColumnExists("logs", "completion_tokens") {
+		emptyExpr = "SUM(CASE WHEN type = 2 AND completion_tokens = 0 THEN 1 ELSE 0 END)"
+	}
 	slotQuery := s.db.RebindQuery(fmt.Sprintf(`
-		SELECT FLOOR((created_at - %d) / %d) as slot_idx,
+		SELECT %s as slot_idx,
 			COUNT(*) as total,
-			SUM(CASE WHEN type = 2 AND completion_tokens > 0 THEN 1 ELSE 0 END) as success,
+			SUM(CASE WHEN type = 2 THEN 1 ELSE 0 END) as success,
 			SUM(CASE WHEN type = 5 THEN 1 ELSE 0 END) as failure,
-			SUM(CASE WHEN type = 2 AND completion_tokens = 0 THEN 1 ELSE 0 END) as empty
+			%s as empty_count
 		FROM logs
 		WHERE model_name = ?
 			AND created_at >= ? AND created_at < ?
 			AND type IN (2, 5)
-		GROUP BY FLOOR((created_at - %d) / %d)`,
-		startTime, slotSeconds,
-		startTime, slotSeconds))
+		GROUP BY %s`, slotExpr, emptyExpr, slotExpr))
 
-	rows, _ := s.db.Query(slotQuery, modelName, startTime, now)
+	rows, err := s.db.Query(slotQuery, modelName, startTime, now)
+	if err != nil {
+		return nil, err
+	}
 
 	// Initialize all slots with zeros
 	type slotInfo struct {
@@ -164,7 +175,7 @@ func (s *ModelStatusService) GetModelStatus(modelName, window string) (map[strin
 					total:   toInt64(row["total"]),
 					success: toInt64(row["success"]),
 					failure: toInt64(row["failure"]),
-					empty:   toInt64(row["empty"]),
+					empty:   toInt64(row["empty_count"]),
 				}
 			}
 		}
@@ -239,12 +250,13 @@ func (s *ModelStatusService) GetModelStatus(modelName, window string) (map[strin
 }
 
 // GetMultipleModelsStatus returns status for multiple models
-func (s *ModelStatusService) GetMultipleModelsStatus(modelNames []string, window string) ([]map[string]interface{}, error) {
+func (s *ModelStatusService) GetMultipleModelsStatus(modelNames []string, window string, noCache ...bool) ([]map[string]interface{}, error) {
 	results := make([]map[string]interface{}, 0, len(modelNames))
+	forceRefresh := len(noCache) > 0 && noCache[0]
 	for _, name := range modelNames {
-		status, err := s.GetModelStatus(name, window)
+		status, err := s.GetModelStatus(name, window, forceRefresh)
 		if err != nil {
-			continue
+			return nil, err
 		}
 		results = append(results, status)
 	}
@@ -252,8 +264,9 @@ func (s *ModelStatusService) GetMultipleModelsStatus(modelNames []string, window
 }
 
 // GetAllModelsStatus returns status for all models that have requests
-func (s *ModelStatusService) GetAllModelsStatus(window string) ([]map[string]interface{}, error) {
-	models, err := s.GetAvailableModels()
+func (s *ModelStatusService) GetAllModelsStatus(window string, noCache ...bool) ([]map[string]interface{}, error) {
+	forceRefresh := len(noCache) > 0 && noCache[0]
+	models, err := s.GetAvailableModels(forceRefresh)
 	if err != nil {
 		return nil, err
 	}
@@ -265,7 +278,7 @@ func (s *ModelStatusService) GetAllModelsStatus(window string) ([]map[string]int
 		}
 	}
 
-	return s.GetMultipleModelsStatus(names, window)
+	return s.GetMultipleModelsStatus(names, window, forceRefresh)
 }
 
 // GetTokenGroups 返回令牌分组列表及其关联的模型（基于 abilities 表）

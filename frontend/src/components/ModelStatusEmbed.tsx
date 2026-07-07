@@ -908,8 +908,9 @@ export function ModelStatusEmbed({
       const response = await fetch(`${apiUrl}/api/model-status/embed/config/selected`)
       const data = await response.json()
       if (data.success) {
-        if (data.data.length > 0) {
-          setSelectedModels(data.data)
+        const selected = Array.isArray(data.data) ? data.data : []
+        if (selected.length > 0) {
+          setSelectedModels(selected)
         }
         if (data.time_window) {
           setTimeWindow(data.time_window)
@@ -944,7 +945,7 @@ export function ModelStatusEmbed({
         } catch {
           // 令牌分组加载失败不影响主流程
         }
-        return data.data || []
+        return selected
       }
     } catch (error) {
       console.error('Failed to load config from backend:', error)
@@ -983,7 +984,7 @@ export function ModelStatusEmbed({
       })
       const data = await response.json()
       if (data.success) {
-        setModelStatuses(data.data)
+        setModelStatuses(Array.isArray(data.data) ? data.data : [])
         setLastUpdate(new Date())
       }
     } catch (error) {

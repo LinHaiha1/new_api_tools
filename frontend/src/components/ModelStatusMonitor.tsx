@@ -351,6 +351,41 @@ interface ModelWithStats {
   request_count_24h: number
 }
 
+const toNumber = (value: unknown) => {
+  const num = Number(value || 0)
+  return Number.isFinite(num) ? num : 0
+}
+
+const normalizeModelStats = (models: unknown[]): ModelWithStats[] => {
+  return models
+    .map((model) => {
+      const row = model as Partial<ModelWithStats>
+      return {
+        model_name: String(row.model_name || ''),
+        request_count_24h: toNumber(row.request_count_24h),
+      }
+    })
+    .filter(model => model.model_name !== '')
+}
+
+const normalizeModelStatus = (status: ModelStatus): ModelStatus => ({
+  ...status,
+  total_requests: toNumber(status.total_requests),
+  success_count: toNumber(status.success_count),
+  success_rate: toNumber(status.success_rate),
+  slot_data: Array.isArray(status.slot_data)
+    ? status.slot_data.map(slot => ({
+      ...slot,
+      slot: toNumber(slot.slot),
+      start_time: toNumber(slot.start_time),
+      end_time: toNumber(slot.end_time),
+      total_requests: toNumber(slot.total_requests),
+      success_count: toNumber(slot.success_count),
+      success_rate: toNumber(slot.success_rate),
+    }))
+    : [],
+})
+
 // Storage keys
 const SELECTED_MODELS_KEY = 'model_status_selected_models'
 const REFRESH_INTERVAL_KEY = 'model_status_refresh_interval'
@@ -376,6 +411,7 @@ export function ModelStatusMonitor({ isEmbed = false }: ModelStatusMonitorProps)
   const [loading, setLoading] = useState(true)
   const [initialLoading, setInitialLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
+  const [statusError, setStatusError] = useState('')
 
   const [timeWindow, setTimeWindow] = useState(() => {
     const saved = localStorage.getItem(TIME_WINDOW_KEY)
@@ -442,6 +478,16 @@ export function ModelStatusMonitor({ isEmbed = false }: ModelStatusMonitorProps)
   const getApiPrefix = useCallback(() => {
     return isEmbed ? '/api/model-status/embed' : '/api/model-status'
   }, [isEmbed])
+
+  const fetchFallbackModels = useCallback(async (): Promise<ModelWithStats[]> => {
+    try {
+      const response = await fetch('/fallback-models.json', { cache: 'no-store' })
+      const data = await response.json()
+      return Array.isArray(data) ? data : []
+    } catch {
+      return []
+    }
+  }, [])
 
   // Click outside handlers
   useClickOutside(modelSelectorRef, () => setShowModelSelector(false), showModelSelector)
@@ -549,9 +595,10 @@ export function ModelStatusMonitor({ isEmbed = false }: ModelStatusMonitorProps)
       })
       const data = await response.json()
       if (data.success) {
-        if (data.data.length > 0) {
-          setSelectedModels(data.data)
-          localStorage.setItem(SELECTED_MODELS_KEY, JSON.stringify(data.data))
+        const selected = Array.isArray(data.data) ? data.data : []
+        if (selected.length > 0) {
+          setSelectedModels(selected)
+          localStorage.setItem(SELECTED_MODELS_KEY, JSON.stringify(selected))
         }
         if (data.time_window) {
           setTimeWindow(data.time_window)
@@ -584,7 +631,7 @@ export function ModelStatusMonitor({ isEmbed = false }: ModelStatusMonitorProps)
         if (data.site_title !== undefined) {
           setSiteTitle(data.site_title || '')
         }
-        return data.data || []
+        return selected
       }
     } catch (error) {
       console.error('Failed to load config from backend:', error)
@@ -621,29 +668,42 @@ export function ModelStatusMonitor({ isEmbed = false }: ModelStatusMonitorProps)
   }, [refreshInterval])
 
   // Fetch available models and load config
-  const fetchAvailableModels = useCallback(async () => {
+  const fetchAvailableModels = useCallback(async (forceRefresh = true) => {
     try {
-      const response = await fetch(`${apiUrl}${getApiPrefix()}/models`, {
+      const cacheParam = forceRefresh ? '?no_cache=true' : ''
+      const response = await fetch(`${apiUrl}${getApiPrefix()}/models${cacheParam}`, {
         headers: getAuthHeaders(),
       })
       const data = await response.json()
       if (data.success) {
+        let models = normalizeModelStats(Array.isArray(data.data) ? data.data : [])
+        if (models.length === 0) {
+          models = normalizeModelStats(await fetchFallbackModels())
+        }
         // data.data is now an array of { model_name, request_count_24h }
-        setAvailableModels(data.data)
+        setAvailableModels(models)
         // Load config from backend
         const savedModels = await loadConfigFromBackend()
         // Auto-select models with requests in last 24h if none selected
-        if (savedModels.length === 0 && data.data.length > 0) {
+        if (savedModels.length === 0 && models.length > 0) {
           // Filter models that have requests in the last 24 hours
-          const activeModels = data.data
+          const activeModels = models
             .filter((m: ModelWithStats) => m.request_count_24h > 0)
             .map((m: ModelWithStats) => m.model_name)
           // If no active models, fall back to first 5
           const defaultModels = activeModels.length > 0
             ? activeModels
-            : data.data.slice(0, 5).map((m: ModelWithStats) => m.model_name)
+            : models.map((m: ModelWithStats) => m.model_name)
           setSelectedModels(defaultModels)
           saveSelectedModelsToBackend(defaultModels)
+        } else if (savedModels.length > 0) {
+          const activeSet = new Set(models.filter((m: ModelWithStats) => m.request_count_24h > 0).map((m: ModelWithStats) => m.model_name))
+          const hasActiveSelection = savedModels.some((name: string) => activeSet.has(name))
+          if (!hasActiveSelection && activeSet.size > 0) {
+            const defaultModels = Array.from(activeSet) as string[]
+            setSelectedModels(defaultModels)
+            saveSelectedModelsToBackend(defaultModels)
+          }
         }
       }
       // 同时加载令牌分组
@@ -651,7 +711,7 @@ export function ModelStatusMonitor({ isEmbed = false }: ModelStatusMonitorProps)
     } catch (error) {
       console.error('Failed to fetch available models:', error)
     }
-  }, [apiUrl, getApiPrefix, getAuthHeaders, loadConfigFromBackend, saveSelectedModelsToBackend, fetchTokenGroups])
+  }, [apiUrl, getApiPrefix, getAuthHeaders, loadConfigFromBackend, saveSelectedModelsToBackend, fetchTokenGroups, fetchFallbackModels])
 
   // Fetch model statuses
   // forceRefresh: bypass cache to get fresh data (used for manual refresh)
@@ -670,6 +730,7 @@ export function ModelStatusMonitor({ isEmbed = false }: ModelStatusMonitorProps)
 
     if (fetchSet.length === 0) {
       setModelStatuses([])
+      setStatusError('')
       setLoading(false)
       // Only clear initialLoading when we know models have been loaded
       if (availableModels.length > 0) {
@@ -683,6 +744,7 @@ export function ModelStatusMonitor({ isEmbed = false }: ModelStatusMonitorProps)
     }
 
     try {
+      setStatusError('')
       // Add no_cache=true when force refreshing to bypass backend cache
       const cacheParam = forceRefresh ? '&no_cache=true' : ''
       const response = await fetch(`${apiUrl}${getApiPrefix()}/status/batch?window=${timeWindow}${cacheParam}`, {
@@ -691,14 +753,19 @@ export function ModelStatusMonitor({ isEmbed = false }: ModelStatusMonitorProps)
         body: JSON.stringify(fetchSet),
       })
       const data = await response.json()
-      if (data.success) {
-        setModelStatuses(data.data)
-        setInitialLoading(false)
+      if (!response.ok || !data.success) {
+        throw new Error(data.error?.message || data.message || `请求失败：${response.status}`)
       }
+      setModelStatuses(Array.isArray(data.data) ? data.data.map(normalizeModelStatus) : [])
+      setInitialLoading(false)
     } catch (error) {
       console.error('Failed to fetch model statuses:', error)
+      const message = error instanceof Error ? error.message : '获取模型状态失败'
+      setStatusError(message)
+      setModelStatuses([])
+      setInitialLoading(false)
       if (!isEmbed) {
-        showToast('error', '获取模型状态失败')
+        showToast('error', message)
       }
     } finally {
       setLoading(false)
@@ -903,8 +970,8 @@ export function ModelStatusMonitor({ isEmbed = false }: ModelStatusMonitorProps)
         result = modelStatuses
     }
 
-    // Hide models with 0 requests
-    result = result.filter(m => m.total_requests > 0)
+    // Keep selected zero-request models visible so stale imports still show monitor cards.
+    result = result.filter(m => m.total_requests > 0 || selectedModels.includes(m.model_name))
 
     // Apply group filter
     if (groupFilter !== 'all') {
@@ -930,7 +997,7 @@ export function ModelStatusMonitor({ isEmbed = false }: ModelStatusMonitorProps)
     }
 
     return result
-  }, [modelStatuses, sortMode, customOrder, statusFilter, groupFilter, customGroups, tokenGroups])
+  }, [modelStatuses, sortMode, customOrder, statusFilter, groupFilter, customGroups, tokenGroups, selectedModels])
 
   // Handle drag end for reordering
   const handleDragEnd = (event: DragEndEvent) => {
@@ -1577,7 +1644,7 @@ export function ModelStatusMonitor({ isEmbed = false }: ModelStatusMonitorProps)
       {showGroupManager && (
         <GroupManagerModal
           groups={customGroups}
-          allModels={modelStatuses.filter(m => m.total_requests > 0).map(m => m.model_name)}
+          allModels={modelStatuses.map(m => m.model_name)}
           onSave={(groups) => {
             saveCustomGroups(groups)
             // Reset filter if the active group was deleted
@@ -1647,7 +1714,12 @@ export function ModelStatusMonitor({ isEmbed = false }: ModelStatusMonitorProps)
       ) : (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
-            {selectedModels.length === 0 ? (
+            {statusError ? (
+              <div className="space-y-2">
+                <p className="font-medium text-destructive">模型状态加载失败</p>
+                <p className="text-xs break-all">{statusError}</p>
+              </div>
+            ) : selectedModels.length === 0 ? (
               <p>请选择要监控的模型</p>
             ) : (
               <p>暂无模型状态数据</p>

@@ -1,12 +1,12 @@
 import { ReactNode, useCallback, useEffect, useState, useRef } from 'react'
-import { LayoutDashboard, Ticket, DollarSign, BarChart3, Users, LogOut, Activity, Globe, Monitor, UserPlus, Key, RadioTower, Bell, Menu, X } from 'lucide-react'
+import { LayoutDashboard, Ticket, DollarSign, BarChart3, Users, LogOut, Activity, Globe, Monitor, UserPlus, Key, RadioTower, Bell, Menu, X, HandCoins, ShieldCheck } from 'lucide-react'
 import { Button } from './ui/button'
 import { Badge } from './ui/badge'
 import { cn } from '../lib/utils'
 import { useAuth } from '../contexts/AuthContext'
 import { apiFetch, createAuthHeaders } from '../lib/api'
 
-export type TabType = 'dashboard' | 'risk' | 'abuse-broadcast' | 'ip-analysis' | 'redemptions' | 'topups' | 'analytics' | 'model-status' | 'users' | 'auto-group' | 'tokens'
+export type TabType = 'dashboard' | 'risk' | 'prompt-audit' | 'abuse-broadcast' | 'ip-analysis' | 'redemptions' | 'topups' | 'analytics' | 'model-status' | 'users' | 'auto-group' | 'tokens' | 'agent-admin'
 
 interface DbStatus {
   connected: boolean
@@ -26,6 +26,7 @@ const tabs: { id: TabType; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'dashboard', label: '仪表板', icon: LayoutDashboard },
   { id: 'topups', label: '充值记录', icon: DollarSign },
   { id: 'risk', label: '风控中心', icon: Activity },
+  { id: 'prompt-audit', label: '提示词审查', icon: ShieldCheck },
   { id: 'abuse-broadcast', label: '联合广播', icon: RadioTower },
   { id: 'ip-analysis', label: 'IP分析', icon: Globe },
   { id: 'analytics', label: '日志分析', icon: BarChart3 },
@@ -33,6 +34,7 @@ const tabs: { id: TabType; label: string; icon: typeof LayoutDashboard }[] = [
   { id: 'users', label: '用户管理', icon: Users },
   { id: 'tokens', label: '令牌管理', icon: Key },
   { id: 'auto-group', label: '自动分组', icon: UserPlus },
+  { id: 'agent-admin', label: '代理设置', icon: HandCoins },
   { id: 'redemptions', label: '兑换码管理', icon: Ticket },
 ]
 

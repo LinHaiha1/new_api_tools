@@ -1,0 +1,16 @@
+[
+  { "model_name": "claude-haiku-4-5-20251001", "request_count_24h": 0 },
+  { "model_name": "claude-opus-4-5-20251101", "request_count_24h": 0 },
+  { "model_name": "claude-opus-4-6", "request_count_24h": 0 },
+  { "model_name": "claude-opus-4-7", "request_count_24h": 0 },
+  { "model_name": "claude-sonnet-4-5-20250929", "request_count_24h": 0 },
+  { "model_name": "claude-sonnet-4-6", "request_count_24h": 0 },
+  { "model_name": "gpt-5.2", "request_count_24h": 0 },
+  { "model_name": "gpt-5.3-codex", "request_count_24h": 0 },
+  { "model_name": "gpt-5.3-codex-high", "request_count_24h": 0 },
+  { "model_name": "gpt-5.3-codex-xhigh", "request_count_24h": 0 },
+  { "model_name": "gpt-5.4", "request_count_24h": 0 },
+  { "model_name": "gpt-5.4-high", "request_count_24h": 0 },
+  { "model_name": "gpt-5.4-openai-compact", "request_count_24h": 0 },
+  { "model_name": "gpt-5.4-xhigh", "request_count_24h": 0 }
+]

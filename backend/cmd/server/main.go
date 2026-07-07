@@ -74,6 +74,7 @@ func main() {
 
 	// Health check (no auth required)
 	handler.RegisterHealthRoutes(r)
+	handler.RegisterPromptAuditInternalRoutes(r)
 
 	// API group with authentication
 	api := r.Group("/api")
@@ -81,6 +82,8 @@ func main() {
 	{
 		// Auth routes (login/logout are whitelisted in middleware)
 		handler.RegisterAuthRoutes(api)
+		handler.RegisterAgentPortalRoutes(api)
+		handler.RegisterAgentAdminRoutes(api)
 
 		// Phase 2.1: Basic modules
 		handler.RegisterRedemptionRoutes(api)
@@ -100,6 +103,7 @@ func main() {
 		handler.RegisterRiskMonitoringRoutes(api)
 		handler.RegisterModelStatusRoutes(api)
 		handler.RegisterAbuseBroadcastRoutes(api)
+		handler.RegisterPromptAuditRoutes(api)
 
 		// Phase 2.4: Token Management
 		handler.RegisterTokenRoutes(api)
