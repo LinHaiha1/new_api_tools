@@ -16,6 +16,7 @@ import (
 )
 
 var promptAuditAppendMu sync.Mutex
+var promptAuditConfigMu sync.Mutex
 
 type PromptAuditEvent struct {
 	Source          string   `json:"source"`
@@ -31,6 +32,19 @@ type PromptAuditEvent struct {
 	MatchedKeywords []string `json:"matched_keywords"`
 	CreatedAt       int64    `json:"created_at"`
 	ReceivedAt      int64    `json:"received_at"`
+}
+
+type PromptAuditConfig struct {
+	Enabled   bool     `json:"enabled"`
+	Version   int64    `json:"version"`
+	Keywords  []string `json:"keywords"`
+	UpdatedAt int64    `json:"updated_at"`
+}
+
+type PromptAuditConfigInput struct {
+	Enabled  bool     `json:"enabled"`
+	Keywords []string `json:"keywords"`
+	Raw      string   `json:"raw"`
 }
 
 type PromptAuditEventList struct {
@@ -81,6 +95,107 @@ func SavePromptAuditEvent(event PromptAuditEvent) error {
 	defer f.Close()
 
 	return json.NewEncoder(f).Encode(event)
+}
+
+func GetPromptAuditConfig() (PromptAuditConfig, error) {
+	path, err := promptAuditConfigPath()
+	if err != nil {
+		return PromptAuditConfig{}, err
+	}
+
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return PromptAuditConfig{
+			Enabled:   false,
+			Version:   0,
+			Keywords:  []string{},
+			UpdatedAt: 0,
+		}, nil
+	}
+	if err != nil {
+		return PromptAuditConfig{}, err
+	}
+	defer f.Close()
+
+	var cfg PromptAuditConfig
+	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
+		return PromptAuditConfig{}, err
+	}
+	cfg.Keywords = normalizePromptAuditKeywords(cfg.Keywords)
+	return cfg, nil
+}
+
+func SavePromptAuditConfig(input PromptAuditConfigInput) (PromptAuditConfig, error) {
+	keywords := normalizePromptAuditKeywords(input.Keywords)
+	if strings.TrimSpace(input.Raw) != "" {
+		keywords = normalizePromptAuditKeywords(append(keywords, splitPromptAuditKeywords(input.Raw)...))
+	}
+
+	promptAuditConfigMu.Lock()
+	defer promptAuditConfigMu.Unlock()
+
+	current, _ := GetPromptAuditConfig()
+	now := time.Now().Unix()
+	cfg := PromptAuditConfig{
+		Enabled:   input.Enabled,
+		Version:   current.Version + 1,
+		Keywords:  keywords,
+		UpdatedAt: now,
+	}
+	if cfg.Version <= 0 {
+		cfg.Version = now
+	}
+
+	path, err := promptAuditConfigPath()
+	if err != nil {
+		return PromptAuditConfig{}, err
+	}
+
+	tmp := path + ".tmp"
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600)
+	if err != nil {
+		return PromptAuditConfig{}, err
+	}
+	encErr := json.NewEncoder(f).Encode(cfg)
+	closeErr := f.Close()
+	if encErr != nil {
+		_ = os.Remove(tmp)
+		return PromptAuditConfig{}, encErr
+	}
+	if closeErr != nil {
+		_ = os.Remove(tmp)
+		return PromptAuditConfig{}, closeErr
+	}
+	_ = os.Remove(path)
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return PromptAuditConfig{}, err
+	}
+
+	return cfg, nil
+}
+
+func splitPromptAuditKeywords(raw string) []string {
+	raw = strings.ReplaceAll(raw, "\r\n", "\n")
+	raw = strings.NewReplacer(",", "\n", "，", "\n", ";", "\n", "；", "\n").Replace(raw)
+	return strings.Split(raw, "\n")
+}
+
+func normalizePromptAuditKeywords(input []string) []string {
+	result := make([]string, 0, len(input))
+	seen := make(map[string]struct{})
+	for _, item := range input {
+		keyword := strings.ToLower(strings.TrimSpace(item))
+		if keyword == "" {
+			continue
+		}
+		if _, ok := seen[keyword]; ok {
+			continue
+		}
+		seen[keyword] = struct{}{}
+		result = append(result, keyword)
+	}
+	return result
 }
 
 func ListPromptAuditEvents(limit, offset int) (PromptAuditEventList, error) {
@@ -174,4 +289,13 @@ func promptAuditEventPath() (string, error) {
 		return "", err
 	}
 	return filepath.Join(dir, "events.jsonl"), nil
+}
+
+func promptAuditConfigPath() (string, error) {
+	cfg := config.Get()
+	dir := filepath.Join(cfg.DataDir, "prompt_audit")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "config.json"), nil
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { AlertTriangle, RefreshCw, Search, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, ChevronLeft, ChevronRight, RefreshCw, Search, ShieldCheck } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 import { apiFetch, createAuthHeaders } from '../lib/api'
 import { Button } from './ui/button'
@@ -31,6 +31,13 @@ interface PromptAuditList {
   path: string
 }
 
+interface PromptAuditConfig {
+  enabled: boolean
+  version: number
+  keywords: string[]
+  updated_at: number
+}
+
 function formatTime(ts: number) {
   if (!ts) return '-'
   return new Date(ts * 1000).toLocaleString('zh-CN')
@@ -48,15 +55,61 @@ export function PromptAudit() {
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
   const [limit, setLimit] = useState(50)
+  const [offset, setOffset] = useState(0)
+  const [configLoading, setConfigLoading] = useState(false)
+  const [configSaving, setConfigSaving] = useState(false)
+  const [configEnabled, setConfigEnabled] = useState(false)
+  const [configVersion, setConfigVersion] = useState(0)
+  const [configUpdatedAt, setConfigUpdatedAt] = useState(0)
+  const [keywordsRaw, setKeywordsRaw] = useState('')
+  const [configMessage, setConfigMessage] = useState('')
 
   const apiUrl = import.meta.env.VITE_API_URL || ''
+
+  const normalizeKeywords = useCallback((raw: string) => {
+    const seen = new Set<string>()
+    return raw
+      .replace(/\r\n/g, '\n')
+      .replace(/[，,；;]/g, '\n')
+      .split('\n')
+      .map(item => item.trim().toLowerCase())
+      .filter(item => {
+        if (!item || seen.has(item)) return false
+        seen.add(item)
+        return true
+      })
+  }, [])
+
+  const loadConfig = useCallback(async () => {
+    if (!token) return
+    setConfigLoading(true)
+    setConfigMessage('')
+    try {
+      const response = await apiFetch(`${apiUrl}/api/prompt-audit/config`, {
+        headers: createAuthHeaders(token),
+      })
+      const json = await response.json()
+      if (!json.success) {
+        throw new Error(json.error?.message || '加载提示词审查配置失败')
+      }
+      const cfg = json.data as PromptAuditConfig
+      setConfigEnabled(Boolean(cfg.enabled))
+      setConfigVersion(Number(cfg.version || 0))
+      setConfigUpdatedAt(Number(cfg.updated_at || 0))
+      setKeywordsRaw((cfg.keywords || []).join('\n'))
+    } catch (err) {
+      setConfigMessage(err instanceof Error ? err.message : '加载提示词审查配置失败')
+    } finally {
+      setConfigLoading(false)
+    }
+  }, [apiUrl, token])
 
   const loadEvents = useCallback(async () => {
     if (!token) return
     setLoading(true)
     setError('')
     try {
-      const response = await apiFetch(`${apiUrl}/api/prompt-audit/events?limit=${limit}&offset=0`, {
+      const response = await apiFetch(`${apiUrl}/api/prompt-audit/events?limit=${limit}&offset=${offset}`, {
         headers: createAuthHeaders(token),
       })
       const json = await response.json()
@@ -69,13 +122,24 @@ export function PromptAudit() {
     } finally {
       setLoading(false)
     }
-  }, [apiUrl, limit, token])
+  }, [apiUrl, limit, offset, token])
 
   useEffect(() => {
     void loadEvents()
   }, [loadEvents])
 
+  useEffect(() => {
+    void loadConfig()
+  }, [loadConfig])
+
   const events = data?.items || []
+  const total = data?.total ?? 0
+  const currentPage = total === 0 ? 0 : Math.floor(offset / limit) + 1
+  const totalPages = total === 0 ? 0 : Math.ceil(total / limit)
+  const canGoPrevious = offset > 0 && !loading
+  const canGoNext = offset + limit < total && !loading
+  const rangeStart = total === 0 ? 0 : offset + 1
+  const rangeEnd = Math.min(offset + events.length, total)
   const filteredEvents = events.filter(event => {
     const q = query.trim().toLowerCase()
     if (!q) return true
@@ -90,6 +154,55 @@ export function PromptAudit() {
       ...(event.matched_keywords || []),
     ].some(value => String(value || '').toLowerCase().includes(q))
   })
+
+  const changeLimit = (nextLimit: number) => {
+    setLimit(nextLimit)
+    setOffset(0)
+  }
+
+  const goPrevious = () => {
+    setOffset(current => Math.max(0, current - limit))
+  }
+
+  const goNext = () => {
+    setOffset(current => current + limit)
+  }
+
+  const saveConfig = async () => {
+    if (!token) return
+    setConfigSaving(true)
+    setConfigMessage('')
+    try {
+      const keywords = normalizeKeywords(keywordsRaw)
+      const response = await apiFetch(`${apiUrl}/api/prompt-audit/config`, {
+        method: 'PUT',
+        headers: {
+          ...createAuthHeaders(token),
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          enabled: configEnabled,
+          keywords,
+        }),
+      })
+      const json = await response.json()
+      if (!json.success) {
+        throw new Error(json.error?.message || '保存提示词审查配置失败')
+      }
+      const cfg = json.data as PromptAuditConfig
+      setConfigEnabled(Boolean(cfg.enabled))
+      setConfigVersion(Number(cfg.version || 0))
+      setConfigUpdatedAt(Number(cfg.updated_at || 0))
+      setKeywordsRaw((cfg.keywords || []).join('\n'))
+      setConfigMessage(`已保存 ${cfg.keywords?.length || 0} 个关键词，版本 ${cfg.version || 0}`)
+    } catch (err) {
+      setConfigMessage(err instanceof Error ? err.message : '保存提示词审查配置失败')
+    } finally {
+      setConfigSaving(false)
+    }
+  }
+
+  const keywordCount = normalizeKeywords(keywordsRaw).length
 
   return (
     <div className="space-y-6">
@@ -119,7 +232,7 @@ export function PromptAudit() {
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>当前显示</CardDescription>
-            <CardTitle>{filteredEvents.length}</CardTitle>
+            <CardTitle>{rangeStart}-{rangeEnd}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
@@ -131,6 +244,54 @@ export function PromptAudit() {
           </CardHeader>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <CardTitle>审查词库配置</CardTitle>
+              <CardDescription>
+                一行一个关键词，也兼容逗号/分号分隔。保存后版本号自增，NewAPI 会按版本拉取并重建 Aho-Corasick 匹配器。
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" onClick={loadConfig} disabled={configLoading || configSaving}>
+                <RefreshCw className={`w-4 h-4 mr-2 ${configLoading ? 'animate-spin' : ''}`} />
+                重新加载
+              </Button>
+              <Button onClick={saveConfig} disabled={configSaving}>
+                {configSaving ? '保存中...' : '保存词库'}
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={configEnabled}
+              onChange={event => setConfigEnabled(event.target.checked)}
+              className="h-4 w-4"
+            />
+            启用 tools 词库配置
+          </label>
+          <textarea
+            value={keywordsRaw}
+            onChange={event => setKeywordsRaw(event.target.value)}
+            placeholder={'每行一个关键词，例如：\n代写\n博彩\n绕过限制'}
+            className="min-h-56 w-full rounded-md border border-input bg-background px-3 py-2 text-sm font-mono leading-6 outline-none focus:ring-2 focus:ring-ring"
+          />
+          <div className="flex flex-col gap-1 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+            <span>当前输入 {keywordCount} 个关键词，配置版本 {configVersion || 0}，更新时间 {formatTime(configUpdatedAt)}</span>
+            <span>大词库建议一行一个词，避免在逗号分隔里混入说明文本。</span>
+          </div>
+          {configMessage && (
+            <div className="rounded-md border bg-muted p-3 text-sm text-muted-foreground">
+              {configMessage}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>
@@ -151,7 +312,7 @@ export function PromptAudit() {
               </div>
               <select
                 value={limit}
-                onChange={e => setLimit(Number(e.target.value))}
+                onChange={e => changeLimit(Number(e.target.value))}
                 className="h-10 rounded-md border border-input bg-background px-3 text-sm"
               >
                 <option value={20}>20 条</option>
@@ -210,6 +371,23 @@ export function PromptAudit() {
                 正在加载提示词审查记录...
               </div>
             )}
+          </div>
+
+          <div className="mt-6 flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm text-muted-foreground">
+              第 {currentPage || 0} / {totalPages || 0} 页，当前页 {filteredEvents.length} 条，合计 {total} 条
+              {query.trim() ? '（搜索仅过滤当前页）' : ''}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={goPrevious} disabled={!canGoPrevious}>
+                <ChevronLeft className="mr-1 h-4 w-4" />
+                上一页
+              </Button>
+              <Button variant="outline" size="sm" onClick={goNext} disabled={!canGoNext}>
+                下一页
+                <ChevronRight className="ml-1 h-4 w-4" />
+              </Button>
+            </div>
           </div>
         </CardContent>
       </Card>
