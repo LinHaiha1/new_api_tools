@@ -723,6 +723,18 @@ func (s *AgentService) AdminCommissionStats(mode, startDate, endDate string) (ma
 	for _, row := range settledRows {
 		settledByUser[int64(agentFloat64(row["user_id"]))] = row
 	}
+	redeemedRows, err := s.db.Query(s.db.RebindQuery(`
+		SELECT user_id, COALESCE(SUM(commission_amount), 0) AS redeemed_amount
+		FROM agent_commission_redemptions
+		WHERE status = 'success'
+		GROUP BY user_id`))
+	if err != nil {
+		return nil, err
+	}
+	redeemedByUser := map[int64]float64{}
+	for _, row := range redeemedRows {
+		redeemedByUser[int64(agentFloat64(row["user_id"]))] = agentFloat64(row["redeemed_amount"])
+	}
 	periodSettledRows, err := s.db.Query(s.db.RebindQuery(`
 		SELECT user_id, COALESCE(SUM(settled_amount), 0) AS period_settled_amount
 		FROM agent_commission_settlements
@@ -734,6 +746,18 @@ func (s *AgentService) AdminCommissionStats(mode, startDate, endDate string) (ma
 	periodSettledByUser := map[int64]float64{}
 	for _, row := range periodSettledRows {
 		periodSettledByUser[int64(agentFloat64(row["user_id"]))] = agentFloat64(row["period_settled_amount"])
+	}
+	periodRedeemedRows, err := s.db.Query(s.db.RebindQuery(`
+		SELECT user_id, COALESCE(SUM(commission_amount), 0) AS period_redeemed_amount
+		FROM agent_commission_redemptions
+		WHERE status = 'success' AND created_at >= ? AND created_at <= ?
+		GROUP BY user_id`), start.Unix(), end.Unix())
+	if err != nil {
+		return nil, err
+	}
+	periodRedeemedByUser := map[int64]float64{}
+	for _, row := range periodRedeemedRows {
+		periodRedeemedByUser[int64(agentFloat64(row["user_id"]))] = agentFloat64(row["period_redeemed_amount"])
 	}
 	query := s.db.RebindQuery(fmt.Sprintf(`
 		SELECT agent.id AS user_id, agent.username, agent.display_name,
@@ -805,6 +829,8 @@ func (s *AgentService) AdminCommissionStats(mode, startDate, endDate string) (ma
 		"total_second_commission":    0.0,
 		"total_commission_estimate":  0.0,
 		"settled_amount":             0.0,
+		"redeemed_amount":            0.0,
+		"period_redeemed_amount":     0.0,
 		"pending_amount":             0.0,
 	}
 	for _, row := range rows {
@@ -831,22 +857,26 @@ func (s *AgentService) AdminCommissionStats(mode, startDate, endDate string) (ma
 		row["period_second_commission"] = periodSecondCommission
 		row["period_commission_estimate"] = periodFirstCommission + periodSecondCommission
 		periodSettledAmount := periodSettledByUser[userID]
-		periodPendingAmount := periodFirstCommission + periodSecondCommission - periodSettledAmount
+		periodRedeemedAmount := periodRedeemedByUser[userID]
+		periodPendingAmount := periodFirstCommission + periodSecondCommission - periodSettledAmount - periodRedeemedAmount
 		if periodPendingAmount < 0 {
 			periodPendingAmount = 0
 		}
 		row["period_settled_amount"] = periodSettledAmount
+		row["period_redeemed_amount"] = periodRedeemedAmount
 		row["period_pending_amount"] = periodPendingAmount
 		row["total_first_commission"] = totalFirstCommission
 		row["total_second_commission"] = totalSecondCommission
 		row["total_commission_estimate"] = totalFirstCommission + totalSecondCommission
 		settlement := settledByUser[userID]
 		settledAmount := agentFloat64(settlement["settled_amount"])
-		pendingAmount := totalFirstCommission + totalSecondCommission - settledAmount
+		redeemedAmount := redeemedByUser[userID]
+		pendingAmount := totalFirstCommission + totalSecondCommission - settledAmount - redeemedAmount
 		if pendingAmount < 0 {
 			pendingAmount = 0
 		}
 		row["settled_amount"] = settledAmount
+		row["redeemed_amount"] = redeemedAmount
 		row["pending_amount"] = pendingAmount
 		row["last_settled_at"] = settlement["last_settled_at"]
 		summary["period_success_money"] = agentFloat64(summary["period_success_money"]) + periodMoney
@@ -860,6 +890,8 @@ func (s *AgentService) AdminCommissionStats(mode, startDate, endDate string) (ma
 		summary["total_second_commission"] = agentFloat64(summary["total_second_commission"]) + totalSecondCommission
 		summary["total_commission_estimate"] = agentFloat64(summary["total_commission_estimate"]) + totalFirstCommission + totalSecondCommission
 		summary["settled_amount"] = agentFloat64(summary["settled_amount"]) + settledAmount
+		summary["redeemed_amount"] = agentFloat64(summary["redeemed_amount"]) + redeemedAmount
+		summary["period_redeemed_amount"] = agentFloat64(summary["period_redeemed_amount"]) + periodRedeemedAmount
 		summary["pending_amount"] = agentFloat64(summary["pending_amount"]) + pendingAmount
 	}
 	return map[string]interface{}{"summary": summary, "agents": rows}, nil

@@ -32,11 +32,13 @@ interface CommissionAgentRow {
   period_second_commission?: number
   period_commission_estimate?: number
   period_settled_amount?: number
+  period_redeemed_amount?: number
   period_pending_amount?: number
   total_success_money?: number
   total_success_count?: number
   total_commission_estimate?: number
   settled_amount?: number
+  redeemed_amount?: number
   pending_amount?: number
   last_settled_at?: number
 }
@@ -325,10 +327,11 @@ export function AgentAdminSettings() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="text-sm text-muted-foreground">统计周期：{String(statsSummary.period_label || '-')}。这里只统计已添加到“专属佣金比例”列表里的用户，未添加用户不视为代理商。</div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
             <StatBox title="周期代理佣金" value={formatAdminMoney(statsSummary.period_commission_estimate)} hint={`一级 ${formatAdminMoney(statsSummary.period_first_commission)} · 二级 ${formatAdminMoney(statsSummary.period_second_commission)}`} />
             <StatBox title="周期代理充值" value={formatAdminMoney(statsSummary.period_success_money)} hint={`${formatAdminNumber(statsSummary.period_success_count)} 笔成功订单`} />
             <StatBox title="已结算金额" value={formatAdminMoney(statsSummary.settled_amount)} hint={`覆盖 ${formatAdminNumber(statsSummary.agent_count)} 个代理商`} />
+            <StatBox title="已兑换佣金" value={formatAdminMoney(statsSummary.redeemed_amount)} hint={`本期兑换 ${formatAdminMoney(statsSummary.period_redeemed_amount)}`} />
             <StatBox title="待结算金额" value={formatAdminMoney(statsSummary.pending_amount)} hint={`累计佣金 ${formatAdminMoney(statsSummary.total_commission_estimate)}`} />
           </div>
           <div className="space-y-3 border-t pt-4">
@@ -340,8 +343,8 @@ export function AgentAdminSettings() {
           <div className="flex items-center justify-between gap-3 flex-wrap border-t pt-4"><Input value={agentKeyword} onChange={e => setAgentKeyword(e.target.value)} placeholder="搜索代理商ID / 用户名 / 昵称" className="max-w-sm" /><div className="text-sm text-muted-foreground">共 {filteredAgents.length} 个代理商，当前第 {safeAgentPage} / {agentTotalPages} 页</div></div>
           <div className="overflow-x-auto">
             <Table>
-              <TableHeader><TableRow><TableHead>代理商</TableHead><TableHead>标签</TableHead><TableHead className="text-right">周期充值</TableHead><TableHead className="text-right">周期佣金</TableHead><TableHead className="text-right">一级佣金</TableHead><TableHead className="text-right">二级佣金</TableHead><TableHead className="text-right">已结算</TableHead><TableHead className="text-right">待结算</TableHead><TableHead className="text-right">累计佣金</TableHead><TableHead>最近结算</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
-              <TableBody>{pagedAgents.map(row => <TableRow key={row.user_id}><TableCell><div className="font-medium">{row.display_name || row.username || '-'}</div><div className="text-xs text-muted-foreground">ID {row.user_id} · 比例 {formatAdminPercent(row.commission_rate)}</div></TableCell><TableCell>{Number(row.power_agent || 0) === 1 ? '实力代理' : '-'}</TableCell><TableCell className="text-right">{formatAdminMoney(row.period_success_money)}</TableCell><TableCell className="text-right font-semibold">{formatAdminMoney(row.period_commission_estimate)}</TableCell><TableCell className="text-right">{formatAdminMoney(row.period_first_commission)}</TableCell><TableCell className="text-right">{Number(row.second_commission_enabled || 0) === 1 ? formatAdminMoney(row.period_second_commission) : '未启用'}</TableCell><TableCell className="text-right">{formatAdminMoney(row.settled_amount)}</TableCell><TableCell className="text-right">{formatAdminMoney(row.pending_amount)}</TableCell><TableCell className="text-right">{formatAdminMoney(row.total_commission_estimate)}</TableCell><TableCell>{formatAdminTime(row.last_settled_at)}</TableCell><TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => togglePowerAgent(row)}>{Number(row.power_agent || 0) === 1 ? '取消实力' : '设为实力'}</Button></TableCell></TableRow>)}{pagedAgents.length === 0 && <TableRow><TableCell colSpan={11} className="text-center text-muted-foreground py-8">暂无代理佣金数据</TableCell></TableRow>}</TableBody>
+              <TableHeader><TableRow><TableHead>代理商</TableHead><TableHead>标签</TableHead><TableHead className="text-right">周期充值</TableHead><TableHead className="text-right">周期佣金</TableHead><TableHead className="text-right">一级佣金</TableHead><TableHead className="text-right">二级佣金</TableHead><TableHead className="text-right">已结算</TableHead><TableHead className="text-right">已兑换</TableHead><TableHead className="text-right">待结算</TableHead><TableHead className="text-right">累计佣金</TableHead><TableHead>最近结算</TableHead><TableHead className="text-right">操作</TableHead></TableRow></TableHeader>
+              <TableBody>{pagedAgents.map(row => <TableRow key={row.user_id}><TableCell><div className="font-medium">{row.display_name || row.username || '-'}</div><div className="text-xs text-muted-foreground">ID {row.user_id} · 比例 {formatAdminPercent(row.commission_rate)}</div></TableCell><TableCell>{Number(row.power_agent || 0) === 1 ? '实力代理' : '-'}</TableCell><TableCell className="text-right">{formatAdminMoney(row.period_success_money)}</TableCell><TableCell className="text-right font-semibold">{formatAdminMoney(row.period_commission_estimate)}</TableCell><TableCell className="text-right">{formatAdminMoney(row.period_first_commission)}</TableCell><TableCell className="text-right">{Number(row.second_commission_enabled || 0) === 1 ? formatAdminMoney(row.period_second_commission) : '未启用'}</TableCell><TableCell className="text-right">{formatAdminMoney(row.settled_amount)}</TableCell><TableCell className="text-right">{formatAdminMoney(row.redeemed_amount)}</TableCell><TableCell className="text-right">{formatAdminMoney(row.pending_amount)}</TableCell><TableCell className="text-right">{formatAdminMoney(row.total_commission_estimate)}</TableCell><TableCell>{formatAdminTime(row.last_settled_at)}</TableCell><TableCell className="text-right"><Button size="sm" variant="outline" onClick={() => togglePowerAgent(row)}>{Number(row.power_agent || 0) === 1 ? '取消实力' : '设为实力'}</Button></TableCell></TableRow>)}{pagedAgents.length === 0 && <TableRow><TableCell colSpan={12} className="text-center text-muted-foreground py-8">暂无代理佣金数据</TableCell></TableRow>}</TableBody>
             </Table>
           </div>
           <div className="flex items-center justify-end gap-2"><Button variant="outline" size="sm" disabled={safeAgentPage <= 1} onClick={() => setAgentPage(p => Math.max(1, p - 1))}>上一页</Button><Button variant="outline" size="sm" disabled={safeAgentPage >= agentTotalPages} onClick={() => setAgentPage(p => Math.min(agentTotalPages, p + 1))}>下一页</Button></div>
