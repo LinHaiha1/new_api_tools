@@ -26,9 +26,17 @@ interface PromptAuditEvent {
 interface PromptAuditList {
   items: PromptAuditEvent[]
   total: number
+  all_total: number
   limit: number
   offset: number
   path: string
+  user_stats: PromptAuditUserStat[]
+}
+
+interface PromptAuditUserStat {
+  user_id: number
+  username: string
+  count: number
 }
 
 interface PromptAuditConfig {
@@ -56,6 +64,7 @@ export function PromptAudit() {
   const [query, setQuery] = useState('')
   const [limit, setLimit] = useState(50)
   const [offset, setOffset] = useState(0)
+  const [selectedUserID, setSelectedUserID] = useState<number | ''>('')
   const [configLoading, setConfigLoading] = useState(false)
   const [configSaving, setConfigSaving] = useState(false)
   const [configEnabled, setConfigEnabled] = useState(false)
@@ -109,7 +118,9 @@ export function PromptAudit() {
     setLoading(true)
     setError('')
     try {
-      const response = await apiFetch(`${apiUrl}/api/prompt-audit/events?limit=${limit}&offset=${offset}`, {
+      const params = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+      if (selectedUserID !== '') params.set('user_id', String(selectedUserID))
+      const response = await apiFetch(`${apiUrl}/api/prompt-audit/events?${params.toString()}`, {
         headers: createAuthHeaders(token),
       })
       const json = await response.json()
@@ -122,7 +133,7 @@ export function PromptAudit() {
     } finally {
       setLoading(false)
     }
-  }, [apiUrl, limit, offset, token])
+  }, [apiUrl, limit, offset, selectedUserID, token])
 
   useEffect(() => {
     void loadEvents()
@@ -134,12 +145,12 @@ export function PromptAudit() {
 
   const events = data?.items || []
   const total = data?.total ?? 0
+  const allTotal = data?.all_total ?? total
+  const userStats = data?.user_stats || []
   const currentPage = total === 0 ? 0 : Math.floor(offset / limit) + 1
   const totalPages = total === 0 ? 0 : Math.ceil(total / limit)
   const canGoPrevious = offset > 0 && !loading
   const canGoNext = offset + limit < total && !loading
-  const rangeStart = total === 0 ? 0 : offset + 1
-  const rangeEnd = Math.min(offset + events.length, total)
   const filteredEvents = events.filter(event => {
     const q = query.trim().toLowerCase()
     if (!q) return true
@@ -157,6 +168,11 @@ export function PromptAudit() {
 
   const changeLimit = (nextLimit: number) => {
     setLimit(nextLimit)
+    setOffset(0)
+  }
+
+  const changeUser = (value: string) => {
+    setSelectedUserID(value ? Number(value) : '')
     setOffset(0)
   }
 
@@ -222,17 +238,23 @@ export function PromptAudit() {
         </Button>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-3">
+      <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
             <CardDescription>总命中记录</CardDescription>
-            <CardTitle>{data?.total ?? 0}</CardTitle>
+            <CardTitle>{allTotal}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>当前显示</CardDescription>
-            <CardTitle>{rangeStart}-{rangeEnd}</CardTitle>
+            <CardDescription>触发用户</CardDescription>
+            <CardTitle>{userStats.length}</CardTitle>
+          </CardHeader>
+        </Card>
+        <Card>
+          <CardHeader className="pb-2">
+            <CardDescription>当前筛选记录</CardDescription>
+            <CardTitle>{total}</CardTitle>
           </CardHeader>
         </Card>
         <Card>
@@ -301,6 +323,18 @@ export function PromptAudit() {
               <CardDescription>按接收时间倒序显示，仅包含命中 `PROMPT_AUDIT_KEYWORDS` 的请求。</CardDescription>
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
+              <select
+                value={selectedUserID}
+                onChange={e => changeUser(e.target.value)}
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm sm:max-w-72"
+              >
+                <option value="">全部用户（{allTotal} 条）</option>
+                {userStats.map(user => (
+                  <option key={user.user_id} value={user.user_id}>
+                    {user.username || `用户 ${user.user_id}`}（ID {user.user_id}）· {user.count} 次
+                  </option>
+                ))}
+              </select>
               <div className="relative">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -376,6 +410,7 @@ export function PromptAudit() {
           <div className="mt-6 flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
             <div className="text-sm text-muted-foreground">
               第 {currentPage || 0} / {totalPages || 0} 页，当前页 {filteredEvents.length} 条，合计 {total} 条
+              {selectedUserID !== '' ? `（用户 ID ${selectedUserID}）` : ''}
               {query.trim() ? '（搜索仅过滤当前页）' : ''}
             </div>
             <div className="flex items-center gap-2">
