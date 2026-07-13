@@ -8,11 +8,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/new-api-tools/backend/internal/config"
+	"github.com/new-api-tools/backend/internal/database"
 )
 
 var promptAuditAppendMu sync.Mutex
@@ -48,11 +50,19 @@ type PromptAuditConfigInput struct {
 }
 
 type PromptAuditEventList struct {
-	Items  []PromptAuditEvent `json:"items"`
-	Total  int                `json:"total"`
-	Limit  int                `json:"limit"`
-	Offset int                `json:"offset"`
-	Path   string             `json:"path"`
+	Items     []PromptAuditEvent    `json:"items"`
+	Total     int                   `json:"total"`
+	AllTotal  int                   `json:"all_total"`
+	Limit     int                   `json:"limit"`
+	Offset    int                   `json:"offset"`
+	Path      string                `json:"path"`
+	UserStats []PromptAuditUserStat `json:"user_stats"`
+}
+
+type PromptAuditUserStat struct {
+	UserID   int    `json:"user_id"`
+	Username string `json:"username"`
+	Count    int    `json:"count"`
 }
 
 func PromptAuditSecretConfigured() bool {
@@ -198,7 +208,7 @@ func normalizePromptAuditKeywords(input []string) []string {
 	return result
 }
 
-func ListPromptAuditEvents(limit, offset int) (PromptAuditEventList, error) {
+func ListPromptAuditEvents(limit, offset, userID int) (PromptAuditEventList, error) {
 	if limit <= 0 {
 		limit = 50
 	}
@@ -217,11 +227,13 @@ func ListPromptAuditEvents(limit, offset int) (PromptAuditEventList, error) {
 	f, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return PromptAuditEventList{
-			Items:  []PromptAuditEvent{},
-			Total:  0,
-			Limit:  limit,
-			Offset: offset,
-			Path:   path,
+			Items:     []PromptAuditEvent{},
+			Total:     0,
+			AllTotal:  0,
+			Limit:     limit,
+			Offset:    offset,
+			Path:      path,
+			UserStats: []PromptAuditUserStat{},
 		}, nil
 	}
 	if err != nil {
@@ -232,6 +244,18 @@ func ListPromptAuditEvents(limit, offset int) (PromptAuditEventList, error) {
 	events, err := readPromptAuditJSONL(f)
 	if err != nil {
 		return PromptAuditEventList{}, err
+	}
+
+	allTotal := len(events)
+	userStats := buildPromptAuditUserStats(events)
+	if userID > 0 {
+		filtered := make([]PromptAuditEvent, 0)
+		for _, event := range events {
+			if event.UserID == userID {
+				filtered = append(filtered, event)
+			}
+		}
+		events = filtered
 	}
 
 	reversePromptAuditEvents(events)
@@ -246,12 +270,71 @@ func ListPromptAuditEvents(limit, offset int) (PromptAuditEventList, error) {
 	}
 
 	return PromptAuditEventList{
-		Items:  events[start:end],
-		Total:  total,
-		Limit:  limit,
-		Offset: offset,
-		Path:   path,
+		Items:     events[start:end],
+		Total:     total,
+		AllTotal:  allTotal,
+		Limit:     limit,
+		Offset:    offset,
+		Path:      path,
+		UserStats: userStats,
 	}, nil
+}
+
+func buildPromptAuditUserStats(events []PromptAuditEvent) []PromptAuditUserStat {
+	counts := make(map[int]int)
+	for _, event := range events {
+		if event.UserID > 0 {
+			counts[event.UserID]++
+		}
+	}
+	if len(counts) == 0 {
+		return []PromptAuditUserStat{}
+	}
+
+	userIDs := make([]int, 0, len(counts))
+	for userID := range counts {
+		userIDs = append(userIDs, userID)
+	}
+	usernames := promptAuditUsernames(userIDs)
+	stats := make([]PromptAuditUserStat, 0, len(userIDs))
+	for _, userID := range userIDs {
+		stats = append(stats, PromptAuditUserStat{
+			UserID:   userID,
+			Username: usernames[userID],
+			Count:    counts[userID],
+		})
+	}
+	sort.Slice(stats, func(i, j int) bool {
+		if stats[i].Count == stats[j].Count {
+			return stats[i].UserID < stats[j].UserID
+		}
+		return stats[i].Count > stats[j].Count
+	})
+	return stats
+}
+
+func promptAuditUsernames(userIDs []int) map[int]string {
+	result := make(map[int]string, len(userIDs))
+	if len(userIDs) == 0 {
+		return result
+	}
+
+	placeholders := make([]string, len(userIDs))
+	args := make([]interface{}, len(userIDs))
+	for i, userID := range userIDs {
+		placeholders[i] = "?"
+		args[i] = userID
+	}
+	db := database.Get()
+	query := db.RebindQuery("SELECT id, COALESCE(username, '') AS username FROM users WHERE id IN (" + strings.Join(placeholders, ",") + ")")
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return result
+	}
+	for _, row := range rows {
+		result[int(toInt64(row["id"]))] = strings.TrimSpace(toString(row["username"]))
+	}
+	return result
 }
 
 func readPromptAuditJSONL(r io.Reader) ([]PromptAuditEvent, error) {

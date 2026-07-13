@@ -27,8 +27,9 @@ func RegisterPromptAuditInternalRoutes(r *gin.Engine) {
 func ListPromptAuditEvents(c *gin.Context) {
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "50"))
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	userID, _ := strconv.Atoi(c.DefaultQuery("user_id", "0"))
 
-	data, err := service.ListPromptAuditEvents(limit, offset)
+	data, err := service.ListPromptAuditEvents(limit, offset, userID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.ErrorResp("PROMPT_AUDIT_LIST_FAILED", err.Error(), ""))
 		return
