@@ -60,9 +60,16 @@ type PromptAuditEventList struct {
 }
 
 type PromptAuditUserStat struct {
-	UserID   int    `json:"user_id"`
-	Username string `json:"username"`
-	Count    int    `json:"count"`
+	UserID       int                      `json:"user_id"`
+	Username     string                   `json:"username"`
+	Count        int                      `json:"count"`
+	KeywordTotal int                      `json:"keyword_total"`
+	TopKeywords  []PromptAuditKeywordStat `json:"top_keywords"`
+}
+
+type PromptAuditKeywordStat struct {
+	Keyword string `json:"keyword"`
+	Count   int    `json:"count"`
 }
 
 func PromptAuditSecretConfigured() bool {
@@ -282,9 +289,25 @@ func ListPromptAuditEvents(limit, offset, userID int) (PromptAuditEventList, err
 
 func buildPromptAuditUserStats(events []PromptAuditEvent) []PromptAuditUserStat {
 	counts := make(map[int]int)
+	keywordCounts := make(map[int]map[string]int)
 	for _, event := range events {
 		if event.UserID > 0 {
 			counts[event.UserID]++
+			if keywordCounts[event.UserID] == nil {
+				keywordCounts[event.UserID] = make(map[string]int)
+			}
+			seen := make(map[string]struct{}, len(event.MatchedKeywords))
+			for _, keyword := range event.MatchedKeywords {
+				keyword = strings.TrimSpace(keyword)
+				if keyword == "" {
+					continue
+				}
+				if _, ok := seen[keyword]; ok {
+					continue
+				}
+				seen[keyword] = struct{}{}
+				keywordCounts[event.UserID][keyword]++
+			}
 		}
 	}
 	if len(counts) == 0 {
@@ -298,10 +321,26 @@ func buildPromptAuditUserStats(events []PromptAuditEvent) []PromptAuditUserStat 
 	usernames := promptAuditUsernames(userIDs)
 	stats := make([]PromptAuditUserStat, 0, len(userIDs))
 	for _, userID := range userIDs {
+		keywords := make([]PromptAuditKeywordStat, 0, len(keywordCounts[userID]))
+		for keyword, count := range keywordCounts[userID] {
+			keywords = append(keywords, PromptAuditKeywordStat{Keyword: keyword, Count: count})
+		}
+		sort.Slice(keywords, func(i, j int) bool {
+			if keywords[i].Count == keywords[j].Count {
+				return keywords[i].Keyword < keywords[j].Keyword
+			}
+			return keywords[i].Count > keywords[j].Count
+		})
+		keywordTotal := len(keywords)
+		if len(keywords) > 5 {
+			keywords = keywords[:5]
+		}
 		stats = append(stats, PromptAuditUserStat{
-			UserID:   userID,
-			Username: usernames[userID],
-			Count:    counts[userID],
+			UserID:       userID,
+			Username:     usernames[userID],
+			Count:        counts[userID],
+			KeywordTotal: keywordTotal,
+			TopKeywords:  keywords,
 		})
 	}
 	sort.Slice(stats, func(i, j int) bool {
