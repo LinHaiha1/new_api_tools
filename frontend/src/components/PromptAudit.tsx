@@ -37,6 +37,13 @@ interface PromptAuditUserStat {
   user_id: number
   username: string
   count: number
+  keyword_total: number
+  top_keywords: PromptAuditKeywordStat[]
+}
+
+interface PromptAuditKeywordStat {
+  keyword: string
+  count: number
 }
 
 interface PromptAuditConfig {
@@ -54,6 +61,14 @@ function formatTime(ts: number) {
 function shortHash(hash: string) {
   if (!hash) return '-'
   return hash.length > 16 ? `${hash.slice(0, 12)}...${hash.slice(-6)}` : hash
+}
+
+function userKeywordSummary(user: PromptAuditUserStat) {
+  const keywords = (user.top_keywords || []).slice(0, 3)
+  if (keywords.length === 0) return ''
+  const summary = keywords.map(item => `${item.keyword}×${item.count}`).join('、')
+  const remaining = Math.max(0, Number(user.keyword_total || 0) - keywords.length)
+  return ` · ${summary}${remaining > 0 ? ` 等 ${user.keyword_total} 个词` : ''}`
 }
 
 export function PromptAudit() {
@@ -326,12 +341,12 @@ export function PromptAudit() {
               <select
                 value={selectedUserID}
                 onChange={e => changeUser(e.target.value)}
-                className="h-10 rounded-md border border-input bg-background px-3 text-sm sm:max-w-72"
+                className="h-10 rounded-md border border-input bg-background px-3 text-sm sm:max-w-[34rem]"
               >
                 <option value="">全部用户（{allTotal} 条）</option>
                 {userStats.map(user => (
                   <option key={user.user_id} value={user.user_id}>
-                    {user.username || `用户 ${user.user_id}`}（ID {user.user_id}）· {user.count} 次
+                    {user.username || `用户 ${user.user_id}`}（ID {user.user_id}）· {user.count} 次{userKeywordSummary(user)}
                   </option>
                 ))}
               </select>
