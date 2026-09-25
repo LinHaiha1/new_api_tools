@@ -2,19 +2,21 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
+const rootDir = import.meta.dirname
+
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: {
-      "@": path.resolve(__dirname, "./src"),
+      "@": path.resolve(rootDir, "./src"),
     },
   },
   build: {
     rollupOptions: {
       input: {
-        main: path.resolve(__dirname, 'index.html'),
-        embed: path.resolve(__dirname, 'embed.html'),
+        main: path.resolve(rootDir, 'index.html'),
+        embed: path.resolve(rootDir, 'embed.html'),
       },
       output: {
         manualChunks(id) {

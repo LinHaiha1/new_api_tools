@@ -60,11 +60,12 @@ type PromptAuditEventList struct {
 }
 
 type PromptAuditUserStat struct {
-	UserID       int                      `json:"user_id"`
-	Username     string                   `json:"username"`
-	Count        int                      `json:"count"`
-	KeywordTotal int                      `json:"keyword_total"`
-	TopKeywords  []PromptAuditKeywordStat `json:"top_keywords"`
+	UserID        int                      `json:"user_id"`
+	Username      string                   `json:"username"`
+	Count         int                      `json:"count"`
+	KeywordTotal  int                      `json:"keyword_total"`
+	TopKeywords   []PromptAuditKeywordStat `json:"top_keywords"`
+	LastMatchedAt int64                    `json:"last_matched_at"`
 }
 
 type PromptAuditKeywordStat struct {
@@ -290,9 +291,17 @@ func ListPromptAuditEvents(limit, offset, userID int) (PromptAuditEventList, err
 func buildPromptAuditUserStats(events []PromptAuditEvent) []PromptAuditUserStat {
 	counts := make(map[int]int)
 	keywordCounts := make(map[int]map[string]int)
+	lastMatchedAt := make(map[int]int64)
 	for _, event := range events {
 		if event.UserID > 0 {
 			counts[event.UserID]++
+			matchedAt := event.CreatedAt
+			if event.ReceivedAt > matchedAt {
+				matchedAt = event.ReceivedAt
+			}
+			if matchedAt > lastMatchedAt[event.UserID] {
+				lastMatchedAt[event.UserID] = matchedAt
+			}
 			if keywordCounts[event.UserID] == nil {
 				keywordCounts[event.UserID] = make(map[string]int)
 			}
@@ -336,11 +345,12 @@ func buildPromptAuditUserStats(events []PromptAuditEvent) []PromptAuditUserStat 
 			keywords = keywords[:5]
 		}
 		stats = append(stats, PromptAuditUserStat{
-			UserID:       userID,
-			Username:     usernames[userID],
-			Count:        counts[userID],
-			KeywordTotal: keywordTotal,
-			TopKeywords:  keywords,
+			UserID:        userID,
+			Username:      usernames[userID],
+			Count:         counts[userID],
+			KeywordTotal:  keywordTotal,
+			TopKeywords:   keywords,
+			LastMatchedAt: lastMatchedAt[userID],
 		})
 	}
 	sort.Slice(stats, func(i, j int) bool {

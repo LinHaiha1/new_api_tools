@@ -39,6 +39,7 @@ interface PromptAuditUserStat {
   count: number
   keyword_total: number
   top_keywords: PromptAuditKeywordStat[]
+  last_matched_at: number
 }
 
 interface PromptAuditKeywordStat {
@@ -58,17 +59,25 @@ function formatTime(ts: number) {
   return new Date(ts * 1000).toLocaleString('zh-CN')
 }
 
+function timeBadgeClass(ts: number) {
+  if (!ts) return 'border-muted bg-muted text-muted-foreground'
+  const age = Math.max(0, Date.now() / 1000 - ts)
+  if (age <= 24 * 60 * 60) return 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/40 dark:text-emerald-300'
+  if (age <= 7 * 24 * 60 * 60) return 'border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-300'
+  return 'border-slate-200 bg-slate-50 text-slate-600 dark:border-slate-700 dark:bg-slate-900/50 dark:text-slate-300'
+}
+
+function timeBadgeLabel(ts: number) {
+  if (!ts) return '暂无命中时间'
+  const age = Math.max(0, Date.now() / 1000 - ts)
+  if (age <= 24 * 60 * 60) return '最近 24 小时'
+  if (age <= 7 * 24 * 60 * 60) return '最近 7 天'
+  return '较早命中'
+}
+
 function shortHash(hash: string) {
   if (!hash) return '-'
   return hash.length > 16 ? `${hash.slice(0, 12)}...${hash.slice(-6)}` : hash
-}
-
-function userKeywordSummary(user: PromptAuditUserStat) {
-  const keywords = (user.top_keywords || []).slice(0, 3)
-  if (keywords.length === 0) return ''
-  const summary = keywords.map(item => `${item.keyword}×${item.count}`).join('、')
-  const remaining = Math.max(0, Number(user.keyword_total || 0) - keywords.length)
-  return ` · ${summary}${remaining > 0 ? ` 等 ${user.keyword_total} 个词` : ''}`
 }
 
 export function PromptAudit() {
@@ -80,6 +89,10 @@ export function PromptAudit() {
   const [limit, setLimit] = useState(50)
   const [offset, setOffset] = useState(0)
   const [selectedUserID, setSelectedUserID] = useState<number | ''>('')
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  // 下拉框使用全量用户统计，避免筛选某个用户后丢失其他用户的数据。
+  const [allUserStats, setAllUserStats] = useState<PromptAuditUserStat[]>([])
+  const [allLatestMatchedAtByUser, setAllLatestMatchedAtByUser] = useState<Record<number, number>>({})
   const [configLoading, setConfigLoading] = useState(false)
   const [configSaving, setConfigSaving] = useState(false)
   const [configEnabled, setConfigEnabled] = useState(false)
@@ -143,6 +156,19 @@ export function PromptAudit() {
         throw new Error(json.error?.message || '加载提示词审查记录失败')
       }
       setData(json.data)
+      // 用户筛选请求不能覆盖下拉框的全量快照。
+      if (selectedUserID === '') {
+        const nextStats = (json.data.user_stats || []) as PromptAuditUserStat[]
+        const nextLatest: Record<number, number> = {}
+        for (const event of (json.data.items || []) as PromptAuditEvent[]) {
+          const matchedAt = Math.max(Number(event.created_at || 0), Number(event.received_at || 0))
+          if (event.user_id > 0 && matchedAt > (nextLatest[event.user_id] || 0)) {
+            nextLatest[event.user_id] = matchedAt
+          }
+        }
+        setAllUserStats(nextStats)
+        setAllLatestMatchedAtByUser(nextLatest)
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载提示词审查记录失败')
     } finally {
@@ -162,6 +188,15 @@ export function PromptAudit() {
   const total = data?.total ?? 0
   const allTotal = data?.all_total ?? total
   const userStats = data?.user_stats || []
+  const dropdownUserStats = allUserStats.length > 0 ? allUserStats : userStats
+  const latestMatchedAtByUser = new Map<number, number>()
+  events.forEach(event => {
+    const matchedAt = Math.max(Number(event.created_at || 0), Number(event.received_at || 0))
+    if (event.user_id > 0 && matchedAt > (latestMatchedAtByUser.get(event.user_id) || 0)) {
+      latestMatchedAtByUser.set(event.user_id, matchedAt)
+    }
+  })
+  const selectedUser = selectedUserID === '' ? undefined : dropdownUserStats.find(user => user.user_id === selectedUserID)
   const currentPage = total === 0 ? 0 : Math.floor(offset / limit) + 1
   const totalPages = total === 0 ? 0 : Math.ceil(total / limit)
   const canGoPrevious = offset > 0 && !loading
@@ -189,6 +224,7 @@ export function PromptAudit() {
   const changeUser = (value: string) => {
     setSelectedUserID(value ? Number(value) : '')
     setOffset(0)
+    setUserMenuOpen(false)
   }
 
   const goPrevious = () => {
@@ -338,18 +374,64 @@ export function PromptAudit() {
               <CardDescription>按接收时间倒序显示，仅包含命中 `PROMPT_AUDIT_KEYWORDS` 的请求。</CardDescription>
             </div>
             <div className="flex flex-col sm:flex-row gap-2">
-              <select
-                value={selectedUserID}
-                onChange={e => changeUser(e.target.value)}
-                className="h-10 rounded-md border border-input bg-background px-3 text-sm sm:max-w-[34rem]"
-              >
-                <option value="">全部用户（{allTotal} 条）</option>
-                {userStats.map(user => (
-                  <option key={user.user_id} value={user.user_id}>
-                    {user.username || `用户 ${user.user_id}`}（ID {user.user_id}）· {user.count} 次{userKeywordSummary(user)}
-                  </option>
-                ))}
-              </select>
+              <div className="relative sm:min-w-[22rem] sm:max-w-[34rem]">
+                <button
+                  type="button"
+                  onClick={() => setUserMenuOpen(open => !open)}
+                  className="flex h-10 w-full items-center justify-between rounded-md border border-input bg-background px-3 text-left text-sm"
+                  aria-expanded={userMenuOpen}
+                >
+                  <span className="truncate">
+                    {selectedUser
+                      ? `${selectedUser.username || `用户 ${selectedUser.user_id}`}（ID ${selectedUser.user_id}）`
+                      : `全部用户（${allTotal} 条）`}
+                  </span>
+                  <span className="ml-2 text-muted-foreground">{userMenuOpen ? '▴' : '▾'}</span>
+                </button>
+                {userMenuOpen && (
+                  <div className="absolute left-0 top-11 z-30 max-h-96 w-full overflow-auto rounded-md border bg-popover p-1 text-popover-foreground shadow-lg">
+                    <button
+                      type="button"
+                      onClick={() => changeUser('')}
+                      className={`flex w-full items-center justify-between rounded-sm px-3 py-2 text-left text-sm hover:bg-accent ${selectedUserID === '' ? 'bg-accent' : ''}`}
+                    >
+                      <span>全部用户</span>
+                      <Badge variant="secondary">{allTotal} 条</Badge>
+                    </button>
+                    {dropdownUserStats.map(user => {
+                      const userLastMatchedAt = user.last_matched_at || allLatestMatchedAtByUser[user.user_id] || latestMatchedAtByUser.get(user.user_id) || 0
+                      const userKeywords = (user.top_keywords || []).slice(0, 4)
+                      return (
+                        <button
+                          type="button"
+                          key={user.user_id}
+                          onClick={() => changeUser(String(user.user_id))}
+                          className={`flex w-full items-center justify-between gap-3 rounded-sm px-3 py-2 text-left hover:bg-accent ${selectedUserID === user.user_id ? 'bg-accent' : ''}`}
+                        >
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate">
+                              <span className="font-medium">{user.username || `用户 ${user.user_id}`}</span>
+                              <span className="ml-2 text-xs text-muted-foreground">ID {user.user_id} · {user.count} 次</span>
+                            </span>
+                            {userKeywords.length > 0 && (
+                              <span className="mt-1 flex flex-wrap gap-1">
+                                {userKeywords.map(keyword => (
+                                  <Badge key={keyword.keyword} className="px-1.5 py-0 text-[10px]" variant="secondary">
+                                    {keyword.keyword} ×{keyword.count}
+                                  </Badge>
+                                ))}
+                              </span>
+                            )}
+                          </span>
+                          <Badge className={`shrink-0 ${timeBadgeClass(userLastMatchedAt)}`} variant="outline" title={formatTime(userLastMatchedAt)}>
+                            {timeBadgeLabel(userLastMatchedAt)}
+                          </Badge>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
               <div className="relative">
                 <Search className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
